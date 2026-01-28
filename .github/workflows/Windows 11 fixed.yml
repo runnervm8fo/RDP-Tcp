@@ -1,77 +1,86 @@
-name: RDP-w11-fixed
+name: RDP-FULL-SETUP
 
 on:
   workflow_dispatch:
 
 jobs:
-  rdp:
-    runs-on: windows-latest
+  setup:
+    runs-on: self-hosted
     timeout-minutes: 3600
 
     steps:
       - name: Enable RDP
+        shell: powershell
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name "fDenyTSConnections" -Value 0 -Force
-
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name "UserAuthentication" -Value 0 -Force
-
-          netsh advfirewall firewall add rule name="RDP" `
-            dir=in action=allow protocol=TCP localport=3389
-
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Restart-Service TermService -Force
 
       - name: Create RDP User
+        shell: powershell
         run: |
-          $password = "123"
+          $password = "sasuke20233"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
-              Set-LocalUser -Name "RDP" -Password $securePass
+          if (Get-LocalUser RDP -ErrorAction SilentlyContinue) {
+            Set-LocalUser RDP -Password $securePass
           } else {
-              New-LocalUser -Name "RDP" `
-                -Password $securePass `
-                -AccountNeverExpires `
-                -PasswordNeverExpires
+            New-LocalUser RDP `
+              -Password $securePass `
+              -AccountNeverExpires `
+              -PasswordNeverExpires
           }
 
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
-
-          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
-          echo "RDP_PASSWORD=123" >> $env:GITHUB_ENV
+          Add-LocalGroupMember Administrators RDP -ErrorAction SilentlyContinue
+          Add-LocalGroupMember "Remote Desktop Users" RDP -ErrorAction SilentlyContinue
 
       - name: Install Tailscale (MSI)
+        shell: powershell
         run: |
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $msi = "$env:TEMP\tailscale.msi"
-
-          Invoke-WebRequest -Uri $url -OutFile $msi
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$msi`"", "/quiet", "/norestart" -Wait
-          Remove-Item $msi -Force
+          Invoke-WebRequest $url -OutFile $msi
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
 
       - name: Connect Tailscale
+        shell: powershell
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=gh-rdp-$env:GITHUB_RUN_ID `
-            --accept-dns=false
+            --hostname=rdp-node
 
-          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
-
-      - name: Show connection info
+      - name: Install getscreen.me
+        shell: powershell
         run: |
-          Write-Host "======================"
-          Write-Host "RDP READY"
-          Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "User: RDP"
-          Write-Host "Pass: 123"
-          Write-Host "======================"
+          $url = "https://getscreen.me/download/windows"
+          $exe = "$env:TEMP\getscreen.exe"
+          Invoke-WebRequest $url -OutFile $exe
+          Start-Process $exe -ArgumentList "/S" -Wait
 
-      - name: Keep runner alive
+      - name: Install Stardesk
+        shell: powershell
         run: |
-          while ($true) {
-            Start-Sleep 300
-          }
+          $url = "https://www.stardesk.app/download/windows"
+          $exe = "$env:TEMP\stardesk.exe"
+          Invoke-WebRequest $url -OutFile $exe
+          Start-Process $exe -ArgumentList "/S" -Wait
+
+      - name: Install Sandboxels (Web App)
+        shell: powershell
+        run: |
+          $path = "C:\Sandboxels"
+          New-Item -ItemType Directory -Force -Path $path
+          Start-Process "msedge.exe" "https://sandboxels.r74n.com"
+
+      - name: Info
+        run: |
+          echo =====================
+          echo RDP READY
+          echo USER: RDP
+          echo PASS: sasuke20233
+          echo =====================
+
+      - name: Keep alive
+        run: |
+          while ($true) { Start-Sleep 300 }
